@@ -1,0 +1,267 @@
+AR = ar
+CC = @CC@
+CXX = @CXX@
+CPPFLAGS = @CPPFLAGS@
+CXXFLAGS = @CXXFLAGS@
+DEPSDIR := .deps
+DEPCFLAGS = -MD -MF $(DEPSDIR)/$*.d -MP
+ifeq ($(strip $(MEMMGR)), )
+  MEMMGR = @MALLOC_LIBS@
+endif
+ifneq ($(strip $(KEYSWAP)), )
+  CPPFLAGS += -DKEYSWAP
+endif
+ifneq ($(strip $(NOPREFETCH)), )
+  CPPFLAGS += -DNOPREFETCH
+endif
+ifneq ($(strip $(NOSUPERPAGE)), )
+  CPPFLAGS += -DNOSUPERPAGE
+endif
+IFLAGS = -I$(VTUNE_INCLUDES)
+LIBS = @LIBS@ -lpthread -lm -Wl,--no-as-needed -ldl -littnotify
+LDFLAGS = @LDFLAGS@ -L$(VTUNE_LIBS)
+
+VTUNE_PATH=/opt/intel/vtune_amplifier
+VTUNE_INCLUDES=$(VTUNE_PATH)/include
+VTUNE_LIBS=$(VTUNE_PATH)/lib64
+
+all: test_atomics mttest
+
+%.o: %.c config.h $(DEPSDIR)/stamp
+	$(CXX) $(IFLAGS) $(CPPFLAGS) ${EXTFLAGS} $(CXXFLAGS) $(DEPCFLAGS) -include config.h -c -o $@ $<
+
+%.o: %.cc config.h $(DEPSDIR)/stamp
+	$(CXX) $(IFLAGS) $(CPPFLAGS) ${EXTFLAGS} $(CXXFLAGS) $(DEPCFLAGS) -include config.h -c -o $@ $<
+
+%.S: %.o
+	objdump -S $< > $@
+
+libjson.a: json.o string.o straccum.o str.o msgpack.o \
+	clp.o kvrandom.o compiler.o memdebug.o kvthread.o
+	@/bin/rm -f $@
+	$(AR) cru $@ $^
+
+KVTREES = query_masstree.o \
+	value_string.o value_array.o value_versioned_array.o \
+	string_slice.o
+
+mtd: mtd.o log.o checkpoint.o file.o misc.o $(KVTREES) \
+	kvio.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+mtclient: mtclient.o misc.o testrunner.o kvio.o libjson.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
+
+# main benchmarks
+mttest: mttest.o misc.o checkpoint.o $(KVTREES) testrunner.o \
+	kvio.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) ${EXTFLAGS} -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+recovery: mttest
+	./mttest recovery
+	
+test_recovery: mttest
+	rm -rf *.json
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=1000000 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=50 --putrate=25 --remrate=25 --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=1000000 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=50 --putrate=50 --remrate=0  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=10 --ninitops=1000000 --nops1=10 --nops2=1000000 --getrate=50 --putrate=50 --remrate=0  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=10 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=0 --putrate=0 --remrate=100  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=1000000 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=0 --putrate=0 --remrate=100  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=10 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=100 --putrate=0 --remrate=0  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest recovery --nkeys=1000000 --ninitops=1000000 --nops1=1000000 --nops2=1000000 --getrate=0 --putrate=100 --remrate=0  --threads=8
+	rm -rf /scratch/tmp/nvm.*
+	rm -rf /dev/shm/incll/nvm.*
+
+rand: mttest
+	rm -rf /dev/shm/incll/nvm.*
+	rm -rf *.json
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	python get_average.py
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	python get_average.py
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	./mttest rand
+	rm -rf /dev/shm/incll/nvm.*
+	python get_average.py
+
+# unit tests
+UNIT_TESTS = test_barrier test_gf test_simplemt test_copy \
+		test_log test_logmt test_incacheline test_bl
+
+test_suite: $(UNIT_TESTS)
+
+run_test_suite: test_suite
+	./test_barrier 
+	./test_bl
+	./test_gf 
+	./test_simplemt 
+	./test_copy
+	./test_log
+	./test_logmt
+	./test_incacheline
+
+test_barrier: test_barrier.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tbarrier: test_barrier
+	./test_barrier
+	
+test_bl: test_bl.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tbl: test_bl
+	./test_bl
+
+test_gf: test_gf.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tgf: test_gf
+	./test_gf
+	
+test_minilv: test_minilv.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tminilv: test_minilv
+	./test_minilv
+	
+test_simplemt: test_simplemt.o compiler.o misc.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tsimplemt: test_simplemt
+	./test_simplemt
+	
+test_copy: test_copy.o compiler.o misc.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tcopy: test_copy
+	./test_copy
+
+test_log: test_log.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tlog: test_log
+	./test_log
+
+test_plog: test_plog.o incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tplog: test_plog
+	./test_plog
+
+test_logmt: test_logmt.o compiler.o misc.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tlogmt: test_logmt
+	./test_logmt
+
+test_incacheline: test_incacheline.o compiler.o misc.o libjson.a incll_globals.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tincacheline: test_incacheline
+	./test_incacheline
+	
+test_ycsb_helper: test_ycsb_helper.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+tycsbhelper: test_ycsb_helper
+	./test_ycsb_helper
+
+# helpers
+get_avg:
+	python get_average.py
+
+flush_all:
+	cd flush && $(MAKE) all
+	
+flush_unload:
+	cd flush && $(MAKE) unload
+
+flush_load:
+	cd flush && $(MAKE) load
+	sudo chmod 777 /dev/global_flush
+	
+clean_notebooks:
+	rm -rf *.json
+
+clean_heap:
+	rm -rf /dev/shm/incll_${USER}/
+
+	
+
+test_string: test_string.o string.o straccum.o compiler.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+test_atomics: test_atomics.o string.o straccum.o kvrandom.o \
+	json.o compiler.o kvio.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+jsontest: jsontest.o string.o straccum.o json.o compiler.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+msgpacktest: msgpacktest.o string.o straccum.o json.o compiler.o msgpack.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+scantest: scantest.o compiler.o misc.o $(KVTREES) libjson.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+unit-mt: unit-mt.o compiler.o misc.o libjson.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(MEMMGR) $(LDFLAGS) $(LIBS)
+
+config.h: stamp-h
+
+GNUmakefile: GNUmakefile.in config.status
+	CONFIG_FILES=$@ CONFIG_HEADERS= $(SHELL) ./config.status
+
+configure config.h.in: configure.ac
+	autoreconf -i
+	touch config.h.in
+
+config.status: configure
+	./configure @ac_configure_args@
+
+$(DEPSDIR)/stamp:
+	mkdir -p $(DEPSDIR)
+	touch $@
+
+stamp-h: config.h.in config.status
+	CONFIG_FILES= $(SHELL) ./config.status
+	echo > stamp-h
+
+clean:
+	rm -f mtd mtclient mttest test_string test_atomics *.o libjson.a
+	rm -f $(UNIT_TESTS)
+	rm -rf .deps
+
+DEPFILES := $(wildcard $(DEPSDIR)/*.d)
+ifneq ($(DEPFILES),)
+include $(DEPFILES)
+endif
+
+.PHONY: clean all
