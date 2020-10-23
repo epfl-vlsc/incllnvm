@@ -34,24 +34,6 @@ Load the kernel module for kernel flushes.
 ## Persistent Region Size ##
 * In `incll_configs.hh` please change `DATA_BUF_SIZE, PDATA_FILENAME, PDATA_DIRNAME` and please change, `PBUF_SIZE, PLOG_FILENAME` according to the mapping location and size of the memory available to your system.
 
-## Testing ##
-Run the script for tests. Check `incll_configs.hh` for trying out different configurations.
-
-
-	$ chmod +x *.sh
-
-Run a single ycsb experiment.
-
-	$ ./run_workload.sh ycsb_a_uni 10
-
-Run many different experiments. Check the `output` folder for results.
-
-	$ ./run_this.sh
-
-## Experimental Results ##
-	
-	https://docs.google.com/spreadsheets/d/1pAZeWBC6P7nOY8_oDlYT_alZqMIIc0of9fWGUjBmW8U/edit?usp=sharing
-
 ## References ##
 
 	Cohen, Aksun, Avni, Larus, "Fine-Grain Checkpointing with In-Cache-Line Logging," ASPLOS 2019.
